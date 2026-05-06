@@ -29,8 +29,6 @@ This project builds an end-to-end data pipeline using FIFA World Cup data. It st
   - `GROUP BY`, `ROLLUP`, `CUBE`  
   - `RANK()` and `CASE`  
 
----
-
 ## Phase 3 — Big Data (Databricks + Spark + Python)
 - Exported warehouse tables to CSV and loaded into Databricks  
 - Recreated analysis using **Spark SQL**  
@@ -43,14 +41,10 @@ This project builds an end-to-end data pipeline using FIFA World Cup data. It st
 - Multi-dimensional analysis (team vs stage)  
 - Custom matchup difficulty score (PySpark)  
 
----
-
 ## Cross-Platform Insights
 - **Oracle SQL** → structured, transactional queries  
 - **Spark SQL** → similar syntax, but runs on distributed data  
 - **PySpark (Python)** → flexible, programmatic analysis  
-
----
 
 ## Scalability
 Oracle runs on a single machine and is optimized for transactions.  
