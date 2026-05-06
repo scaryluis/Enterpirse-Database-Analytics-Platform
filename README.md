@@ -20,8 +20,6 @@ This project builds an end-to-end data pipeline using FIFA World Cup data. It st
   - Generating reports  
 - Implemented validation, calculations, and error handling  
 
----
-
 ## Phase 2 — Data Warehouse (SQL + ETL)
 - Designed a star schema:
   - Fact: `FACT_MATCH_TEAM_PERFORMANCE`  
