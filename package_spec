@@ -1,0 +1,74 @@
+-- =============================================================
+-- IS480 — Advanced Database Management | Spring 2026
+-- FIFA World Cup 2022 — PL/SQL Package Specification
+-- Phase 1: package_spec.sql
+-- =============================================================
+
+CREATE OR REPLACE PACKAGE wc_analytics AS
+
+    -- =========================================================
+    -- PROCEDURES
+    -- =========================================================
+
+    -- 1. Record a full match result: inserts score, discipline,
+    --    shooting, and possession stats for one team in a match.
+    PROCEDURE record_match_result (
+        p_match_id          IN MATCH.match_id%TYPE,
+        p_team_id           IN TEAM.team_id%TYPE,
+        p_is_team1          IN MATCH_TEAM.is_team1%TYPE,
+        p_goals             IN MATCH_TEAM_SCORE.goals%TYPE,
+        p_goals_conceded    IN MATCH_TEAM_SCORE.goals_conceded%TYPE,
+        p_assists           IN MATCH_TEAM_SCORE.assists%TYPE,
+        p_yellow_cards      IN MATCH_TEAM_DISCIPLINE_STATS.yellow_cards%TYPE,
+        p_red_cards         IN MATCH_TEAM_DISCIPLINE_STATS.red_cards%TYPE,
+        p_fouls             IN MATCH_TEAM_DISCIPLINE_STATS.fouls_against%TYPE
+    );
+
+    -- 2. Advance a team to the next stage by inserting a new
+    --    MATCH_TEAM row for a given match in the next stage.
+    PROCEDURE advance_team_to_stage (
+        p_team_id       IN TEAM.team_id%TYPE,
+        p_next_stage_id IN STAGE.stage_id%TYPE,
+        p_match_id      IN MATCH.match_id%TYPE
+    );
+
+    -- 3. Print a formatted group-stage report for all teams
+    --    in a given group letter (e.g., 'A').
+    PROCEDURE print_group_report (
+        p_group_letter IN TEAM.group_letter%TYPE
+    );
+
+    -- =========================================================
+    -- FUNCTIONS
+    -- =========================================================
+
+    -- 1. Returns total goals scored by a team across all matches.
+    FUNCTION get_team_total_goals (
+        p_team_id IN TEAM.team_id%TYPE
+    ) RETURN NUMBER;
+
+    -- 2. Returns a team's goal difference (goals - goals_conceded).
+    FUNCTION get_goal_difference (
+        p_team_id IN TEAM.team_id%TYPE
+    ) RETURN NUMBER;
+
+    -- 3. Calculates and returns the discipline score for a team:
+    --    (yellow_cards * 1) + (red_cards * 3) + (fouls / 10)
+    --    Lower is better (used for tie-breaking).
+    FUNCTION get_discipline_score (
+        p_team_id IN TEAM.team_id%TYPE
+    ) RETURN NUMBER;
+
+    -- =========================================================
+    -- HELPER TYPE (used internally in print_group_report)
+    -- =========================================================
+    TYPE team_stat_rec IS RECORD (
+        team_name       TEAM.team_name%TYPE,
+        total_goals     NUMBER,
+        total_conceded  NUMBER,
+        goal_diff       NUMBER,
+        discipline_score NUMBER
+    );
+
+END wc_analytics;
+/

@@ -1,0 +1,440 @@
+-- =============================================================
+-- IS480 — Advanced Database Management | Spring 2026
+-- FIFA World Cup 2022 — PL/SQL Package Body
+-- Phase 1: package_body.sql
+-- =============================================================
+
+CREATE OR REPLACE PACKAGE BODY wc_analytics AS
+
+    -- ===========================================================
+    -- PRIVATE PROCEDURE: print_stage_match_summary
+    --   Uses a second explicit cursor (OPEN/FETCH/EXIT WHEN/CLOSE)
+    --   and a numeric FOR loop for formatting.
+    -- ===========================================================
+    PROCEDURE print_stage_match_summary (
+        p_stage_id IN STAGE.stage_id%TYPE
+    ) IS
+        CURSOR c_matches IS
+            SELECT match_id, match_date, match_hour
+            FROM MATCH
+            WHERE stage_id = p_stage_id
+            ORDER BY match_date, match_hour;
+
+        v_match_rec   c_matches%ROWTYPE;
+        v_stage_name  STAGE.stage_name%TYPE;
+    BEGIN
+        SELECT stage_name
+        INTO v_stage_name
+        FROM STAGE
+        WHERE stage_id = p_stage_id;
+
+        DBMS_OUTPUT.PUT_LINE('Stage Match Summary: ' || v_stage_name);
+
+        -- Numeric FOR loop
+        FOR i IN 1..40 LOOP
+            DBMS_OUTPUT.PUT('*');
+        END LOOP;
+        DBMS_OUTPUT.NEW_LINE;
+
+        OPEN c_matches;
+        LOOP
+            FETCH c_matches INTO v_match_rec;
+            EXIT WHEN c_matches%NOTFOUND;
+
+            DBMS_OUTPUT.PUT_LINE(
+                'Match ID: ' || v_match_rec.match_id
+                || ' | Date: ' || TO_CHAR(v_match_rec.match_date, 'YYYY-MM-DD')
+                || ' | Hour: ' || v_match_rec.match_hour
+            );
+        END LOOP;
+        CLOSE c_matches;
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('[print_stage_match_summary] Invalid stage ID: ' || p_stage_id);
+        WHEN OTHERS THEN
+            IF c_matches%ISOPEN THEN
+                CLOSE c_matches;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('[print_stage_match_summary] ERROR: ' || SQLERRM);
+    END print_stage_match_summary;
+
+
+    -- ===========================================================
+    -- PROCEDURE 1: record_match_result
+    --   Validates the match and team exist, then inserts a
+    --   MATCH_TEAM row and associated score + discipline stats.
+    --   Uses: COUNT(*) checks, exception handling, DBMS_OUTPUT,
+    --         RAISE_APPLICATION_ERROR, %TYPE
+    -- ===========================================================
+    PROCEDURE record_match_result (
+        p_match_id          IN MATCH.match_id%TYPE,
+        p_team_id           IN TEAM.team_id%TYPE,
+        p_is_team1          IN MATCH_TEAM.is_team1%TYPE,
+        p_goals             IN MATCH_TEAM_SCORE.goals%TYPE,
+        p_goals_conceded    IN MATCH_TEAM_SCORE.goals_conceded%TYPE,
+        p_assists           IN MATCH_TEAM_SCORE.assists%TYPE,
+        p_yellow_cards      IN MATCH_TEAM_DISCIPLINE_STATS.yellow_cards%TYPE,
+        p_red_cards         IN MATCH_TEAM_DISCIPLINE_STATS.red_cards%TYPE,
+        p_fouls             IN MATCH_TEAM_DISCIPLINE_STATS.fouls_against%TYPE
+    ) IS
+        v_match_count   NUMBER;
+        v_team_count    NUMBER;
+        v_mt_count      NUMBER;
+        v_new_mt_id     MATCH_TEAM.match_team_id%TYPE;
+        v_team_name     TEAM.team_name%TYPE;
+
+        -- User-defined exception: team already recorded for this match
+        e_duplicate_entry EXCEPTION;
+        PRAGMA EXCEPTION_INIT(e_duplicate_entry, -20001);
+
+    BEGIN
+        -- COUNT(*) check 1: verify match exists
+        SELECT COUNT(*) INTO v_match_count
+        FROM MATCH
+        WHERE match_id = p_match_id;
+
+        IF v_match_count = 0 THEN
+            RAISE_APPLICATION_ERROR(-20002,
+                'Match ID ' || p_match_id || ' does not exist.');
+        END IF;
+
+        -- COUNT(*) check 2: verify team exists
+        SELECT COUNT(*) INTO v_team_count
+        FROM TEAM
+        WHERE team_id = p_team_id;
+
+        IF v_team_count = 0 THEN
+            RAISE_APPLICATION_ERROR(-20003,
+                'Team ID ' || p_team_id || ' does not exist.');
+        END IF;
+
+        -- COUNT(*) check 3: prevent duplicate entry
+        SELECT COUNT(*) INTO v_mt_count
+        FROM MATCH_TEAM
+        WHERE match_id = p_match_id AND team_id = p_team_id;
+
+        IF v_mt_count > 0 THEN
+            RAISE_APPLICATION_ERROR(-20001,
+                'Team ' || p_team_id || ' already has a record for match ' || p_match_id || '.');
+        END IF;
+
+        -- Fetch team name for diagnostic output
+        SELECT team_name INTO v_team_name
+        FROM TEAM
+        WHERE team_id = p_team_id;
+
+        -- Insert MATCH_TEAM row
+        INSERT INTO MATCH_TEAM (match_id, team_id, is_team1)
+        VALUES (p_match_id, p_team_id, p_is_team1)
+        RETURNING match_team_id INTO v_new_mt_id;
+
+        -- Insert score stats
+        INSERT INTO MATCH_TEAM_SCORE
+            (match_team_id, goals, goals_conceded, assists)
+        VALUES
+            (v_new_mt_id, p_goals, p_goals_conceded, p_assists);
+
+        -- Insert discipline stats
+        INSERT INTO MATCH_TEAM_DISCIPLINE_STATS
+            (match_team_id, yellow_cards, red_cards, fouls_against)
+        VALUES
+            (v_new_mt_id, p_yellow_cards, p_red_cards, p_fouls);
+
+        -- Diagnostic output (not error propagation)
+        DBMS_OUTPUT.PUT_LINE('[record_match_result] SUCCESS: '
+            || v_team_name || ' recorded for Match ' || p_match_id
+            || ' | Goals: ' || p_goals || ' | YC: ' || p_yellow_cards
+            || ' | RC: ' || p_red_cards);
+
+        COMMIT;
+
+    EXCEPTION
+        WHEN e_duplicate_entry THEN
+            DBMS_OUTPUT.PUT_LINE('[record_match_result] ERROR: Duplicate entry caught. ' || SQLERRM);
+            ROLLBACK;
+            RAISE;
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('[record_match_result] UNEXPECTED ERROR: ' || SQLERRM);
+            ROLLBACK;
+            RAISE;
+    END record_match_result;
+
+
+    -- ===========================================================
+    -- PROCEDURE 2: advance_team_to_stage
+    --   Validates the team hasn't already been entered into the
+    --   target match, then creates a MATCH_TEAM row linking
+    --   them to a knockout-round match.
+    --   Uses: COUNT(*) checks, user-defined exception, %TYPE
+    -- ===========================================================
+    PROCEDURE advance_team_to_stage (
+        p_team_id       IN TEAM.team_id%TYPE,
+        p_next_stage_id IN STAGE.stage_id%TYPE,
+        p_match_id      IN MATCH.match_id%TYPE
+    ) IS
+        v_stage_count   NUMBER;
+        v_match_count   NUMBER;
+        v_already_in    NUMBER;
+        v_team_name     TEAM.team_name%TYPE;
+        v_stage_name    STAGE.stage_name%TYPE;
+
+    BEGIN
+        -- Validate stage
+        SELECT COUNT(*) INTO v_stage_count
+        FROM STAGE
+        WHERE stage_id = p_next_stage_id;
+
+        IF v_stage_count = 0 THEN
+            RAISE_APPLICATION_ERROR(-20010,
+                'Stage ID ' || p_next_stage_id || ' does not exist.');
+        END IF;
+
+        -- Validate match belongs to that stage
+        SELECT COUNT(*) INTO v_match_count
+        FROM MATCH
+        WHERE match_id = p_match_id AND stage_id = p_next_stage_id;
+
+        IF v_match_count = 0 THEN
+            RAISE_APPLICATION_ERROR(-20011,
+                'Match ID ' || p_match_id || ' does not belong to Stage ID ' || p_next_stage_id || '.');
+        END IF;
+
+        -- Prevent duplicate advancement
+        SELECT COUNT(*) INTO v_already_in
+        FROM MATCH_TEAM
+        WHERE match_id = p_match_id AND team_id = p_team_id;
+
+        IF v_already_in > 0 THEN
+            RAISE_APPLICATION_ERROR(-20012,
+                'Team ' || p_team_id || ' is already assigned to Match ' || p_match_id || '.');
+        END IF;
+
+        -- Fetch names for output
+        SELECT team_name INTO v_team_name FROM TEAM WHERE team_id = p_team_id;
+        SELECT stage_name INTO v_stage_name FROM STAGE WHERE stage_id = p_next_stage_id;
+
+        -- Insert the advancement record
+        INSERT INTO MATCH_TEAM (match_id, team_id, is_team1)
+        VALUES (p_match_id, p_team_id, 'N');
+
+        DBMS_OUTPUT.PUT_LINE('[advance_team_to_stage] ' || v_team_name
+            || ' advanced to ' || v_stage_name
+            || ' (Match ID: ' || p_match_id || ')');
+
+        COMMIT;
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('[advance_team_to_stage] Team or Stage not found: ' || SQLERRM);
+            ROLLBACK;
+            RAISE_APPLICATION_ERROR(-20013, 'Team or Stage lookup failed: ' || SQLERRM);
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('[advance_team_to_stage] ERROR: ' || SQLERRM);
+            ROLLBACK;
+            RAISE;
+    END advance_team_to_stage;
+
+
+    -- ===========================================================
+    -- PROCEDURE 3: print_group_report
+    --   Uses an explicit cursor to iterate over all teams in a
+    --   group, printing their goals, goal difference, and
+    --   discipline score in a formatted table.
+    --   Also uses a cursor FOR loop.
+    -- ===========================================================
+    PROCEDURE print_group_report (
+        p_group_letter IN TEAM.group_letter%TYPE
+    ) IS
+        -- Explicit cursor: all teams in the given group
+        CURSOR c_teams IS
+            SELECT team_id, team_name
+            FROM TEAM
+            WHERE group_letter = p_group_letter
+            ORDER BY team_name;
+
+        v_team         c_teams%ROWTYPE;
+        v_goals        NUMBER;
+        v_goal_diff    NUMBER;
+        v_discipline   NUMBER;
+        v_group_count  NUMBER;
+        v_rank_label   VARCHAR2(20);
+
+    BEGIN
+        -- Validate that the group exists
+        SELECT COUNT(*) INTO v_group_count
+        FROM TEAM
+        WHERE group_letter = UPPER(p_group_letter);
+
+        IF v_group_count = 0 THEN
+            RAISE_APPLICATION_ERROR(-20020,
+                'Group "' || p_group_letter || '" has no teams. Check the group letter.');
+        END IF;
+
+        DBMS_OUTPUT.PUT_LINE('========================================');
+        DBMS_OUTPUT.PUT_LINE(' GROUP ' || UPPER(p_group_letter) || ' — PERFORMANCE REPORT');
+        DBMS_OUTPUT.PUT_LINE('========================================');
+        DBMS_OUTPUT.PUT_LINE(RPAD('Team', 20) || LPAD('Goals',6)
+            || LPAD('Diff',6) || LPAD('Discipline',12));
+        DBMS_OUTPUT.PUT_LINE(RPAD('-',20,'-') || LPAD('-',6,'-')
+            || LPAD('-',6,'-') || LPAD('-',12,'-'));
+
+        -- Open, fetch, and close the explicit cursor
+        OPEN c_teams;
+        LOOP
+            FETCH c_teams INTO v_team;
+            EXIT WHEN c_teams%NOTFOUND;
+
+            -- Call our functions for each team
+            v_goals      := get_team_total_goals(v_team.team_id);
+            v_goal_diff  := get_goal_difference(v_team.team_id);
+            v_discipline := get_discipline_score(v_team.team_id);
+
+            -- Conditional logic: tag teams with good/concerning discipline
+            IF v_discipline = 0 THEN
+                v_rank_label := ' (Clean)';
+            ELSIF v_discipline < 2 THEN
+                v_rank_label := ' (Fair)';
+            ELSE
+                v_rank_label := ' (Caution)';
+            END IF;
+
+            DBMS_OUTPUT.PUT_LINE(
+                RPAD(v_team.team_name, 20)
+                || LPAD(v_goals, 6)
+                || LPAD(v_goal_diff, 6)
+                || LPAD(v_discipline, 12)
+                || v_rank_label
+            );
+        END LOOP;
+        CLOSE c_teams;
+
+        DBMS_OUTPUT.PUT_LINE('========================================');
+        DBMS_OUTPUT.PUT_LINE(' Total teams in group: ' || v_group_count);
+        DBMS_OUTPUT.PUT_LINE('========================================');
+
+        -- Cursor FOR loop
+        DBMS_OUTPUT.PUT_LINE('Group ' || UPPER(p_group_letter) || ' team listing:');
+        FOR rec IN (
+            SELECT team_name, region
+            FROM TEAM
+            WHERE group_letter = UPPER(p_group_letter)
+            ORDER BY team_name
+        ) LOOP
+            DBMS_OUTPUT.PUT_LINE(' - ' || rec.team_name || ' (' || rec.region || ')');
+        END LOOP;
+
+        -- Demonstrate second explicit cursor + numeric FOR loop
+        print_stage_match_summary(1);
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            -- Make sure cursor is closed on unexpected error
+            IF c_teams%ISOPEN THEN
+                CLOSE c_teams;
+            END IF;
+            DBMS_OUTPUT.PUT_LINE('[print_group_report] ERROR: ' || SQLERRM);
+            RAISE;
+    END print_group_report;
+
+
+    -- ===========================================================
+    -- FUNCTION 1: get_team_total_goals
+    --   Aggregates all goals scored by a team across all matches.
+    --   Uses: SUM aggregate, exception handling, %TYPE
+    -- ===========================================================
+    FUNCTION get_team_total_goals (
+        p_team_id IN TEAM.team_id%TYPE
+    ) RETURN NUMBER IS
+        v_total_goals NUMBER;
+    BEGIN
+        SELECT NVL(SUM(s.goals), 0)
+        INTO v_total_goals
+        FROM MATCH_TEAM_SCORE s
+        JOIN MATCH_TEAM mt ON s.match_team_id = mt.match_team_id
+        WHERE mt.team_id = p_team_id;
+
+        RETURN v_total_goals;
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN 0;
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('[get_team_total_goals] ERROR for team '
+                || p_team_id || ': ' || SQLERRM);
+            RETURN -1;
+    END get_team_total_goals;
+
+
+    -- ===========================================================
+    -- FUNCTION 2: get_goal_difference
+    --   Computes goals scored minus goals conceded.
+    --   Uses: NVL, aggregate query, %TYPE
+    -- ===========================================================
+    FUNCTION get_goal_difference (
+        p_team_id IN TEAM.team_id%TYPE
+    ) RETURN NUMBER IS
+        v_goals_for     NUMBER;
+        v_goals_against NUMBER;
+    BEGIN
+        SELECT NVL(SUM(s.goals), 0),
+               NVL(SUM(s.goals_conceded), 0)
+        INTO v_goals_for, v_goals_against
+        FROM MATCH_TEAM_SCORE s
+        JOIN MATCH_TEAM mt ON s.match_team_id = mt.match_team_id
+        WHERE mt.team_id = p_team_id;
+
+        RETURN v_goals_for - v_goals_against;
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN 0;
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('[get_goal_difference] ERROR: ' || SQLERRM);
+            RETURN -99;
+    END get_goal_difference;
+
+
+    -- ===========================================================
+    -- FUNCTION 3: get_discipline_score
+    --   Computes a weighted discipline score for a team:
+    --     (yellow_cards * 1) + (red_cards * 3) + (total_fouls / 10)
+    --   Lower score = better-disciplined team.
+    --   Used for tie-breaking in group standings (FIFA rules).
+    --   Uses: computational formula, NVL, %TYPE, exception
+    -- ===========================================================
+    FUNCTION get_discipline_score (
+        p_team_id IN TEAM.team_id%TYPE
+    ) RETURN NUMBER IS
+        v_yellows   NUMBER;
+        v_reds      NUMBER;
+        v_fouls     NUMBER;
+        v_score     NUMBER;
+    BEGIN
+        SELECT NVL(SUM(d.yellow_cards), 0),
+               NVL(SUM(d.red_cards), 0),
+               NVL(SUM(d.fouls_against), 0)
+        INTO v_yellows, v_reds, v_fouls
+        FROM MATCH_TEAM_DISCIPLINE_STATS d
+        JOIN MATCH_TEAM mt ON d.match_team_id = mt.match_team_id
+        WHERE mt.team_id = p_team_id;
+
+        -- Weighted discipline formula
+        v_score := (v_yellows * 1) + (v_reds * 3) + ROUND(v_fouls / 10, 2);
+
+        RETURN v_score;
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN 0;
+        WHEN TOO_MANY_ROWS THEN
+            DBMS_OUTPUT.PUT_LINE('[get_discipline_score] TOO_MANY_ROWS for team: '
+                || p_team_id);
+            RETURN -1;
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('[get_discipline_score] ERROR: ' || SQLERRM);
+            RETURN -1;
+    END get_discipline_score;
+
+END wc_analytics;
+/

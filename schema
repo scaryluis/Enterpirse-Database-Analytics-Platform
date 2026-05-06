@@ -1,0 +1,300 @@
+-- =============================================================
+-- IS480 — Advanced Database Management | Spring 2026
+-- FIFA World Cup 2022 — OLTP Schema (3NF)
+-- Phase 1: schema.sql
+-- =============================================================
+
+-- -------------------------------------------------------------
+-- DROP TABLES (run in reverse FK order for clean re-creation)
+-- -------------------------------------------------------------
+BEGIN
+    FOR t IN (
+        SELECT table_name FROM user_tables
+        WHERE table_name IN (
+            'MATCH_TEAM_LINE_BREAK_STATS','MATCH_TEAM_CHANNEL_STATS',
+            'MATCH_TEAM_DISCIPLINE_STATS','MATCH_TEAM_DEFENSIVE_STATS',
+            'MATCH_TEAM_POSSESSION_STATS','MATCH_TEAM_SHOOTING_STATS',
+            'MATCH_TEAM_SCORE','MATCH_TEAM','MATCH',
+            'TEAM','STAGE','TOURNAMENT'
+        )
+    ) LOOP
+        EXECUTE IMMEDIATE 'DROP TABLE ' || t.table_name || ' CASCADE CONSTRAINTS';
+    END LOOP;
+END;
+/
+
+-- -------------------------------------------------------------
+-- TOURNAMENT
+-- -------------------------------------------------------------
+CREATE TABLE TOURNAMENT (
+    tournament_id   NUMBER          GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name            VARCHAR2(100)   NOT NULL,
+    year            NUMBER(4)       NOT NULL,
+    host_country    VARCHAR2(100)   NOT NULL
+);
+
+-- -------------------------------------------------------------
+-- STAGE
+-- -------------------------------------------------------------
+CREATE TABLE STAGE (
+    stage_id        NUMBER          GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tournament_id   NUMBER          NOT NULL REFERENCES TOURNAMENT(tournament_id),
+    stage_name      VARCHAR2(100)   NOT NULL,
+    stage_order     NUMBER          NOT NULL
+);
+
+-- -------------------------------------------------------------
+-- TEAM
+-- -------------------------------------------------------------
+CREATE TABLE TEAM (
+    team_id         NUMBER          GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    team_name       VARCHAR2(100)   NOT NULL,
+    region          VARCHAR2(100),
+    group_letter    VARCHAR2(2)
+);
+
+-- -------------------------------------------------------------
+-- MATCH
+-- -------------------------------------------------------------
+CREATE TABLE MATCH (
+    match_id        NUMBER          GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    stage_id        NUMBER          NOT NULL REFERENCES STAGE(stage_id),
+    match_date      DATE            NOT NULL,
+    match_hour      VARCHAR2(10)
+);
+
+-- -------------------------------------------------------------
+-- MATCH_TEAM  (junction: which team played in which match)
+-- -------------------------------------------------------------
+CREATE TABLE MATCH_TEAM (
+    match_team_id   NUMBER          GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_id        NUMBER          NOT NULL REFERENCES MATCH(match_id),
+    team_id         NUMBER          NOT NULL REFERENCES TEAM(team_id),
+    is_team1        CHAR(1)         DEFAULT 'N' CHECK (is_team1 IN ('Y','N'))
+);
+
+-- -------------------------------------------------------------
+-- MATCH_TEAM_SCORE
+-- -------------------------------------------------------------
+CREATE TABLE MATCH_TEAM_SCORE (
+    score_id            NUMBER  GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_team_id       NUMBER  NOT NULL REFERENCES MATCH_TEAM(match_team_id),
+    goals               NUMBER  DEFAULT 0,
+    goals_conceded      NUMBER  DEFAULT 0,
+    assists             NUMBER  DEFAULT 0,
+    penalties_scored    NUMBER  DEFAULT 0,
+    own_goals           NUMBER  DEFAULT 0,
+    goal_preventions    NUMBER  DEFAULT 0
+);
+
+-- -------------------------------------------------------------
+-- MATCH_TEAM_SHOOTING_STATS
+-- -------------------------------------------------------------
+CREATE TABLE MATCH_TEAM_SHOOTING_STATS (
+    shooting_id                 NUMBER  GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_team_id               NUMBER  NOT NULL REFERENCES MATCH_TEAM(match_team_id),
+    total_attempts              NUMBER  DEFAULT 0,
+    on_target_attempts          NUMBER  DEFAULT 0,
+    off_target_attempts         NUMBER  DEFAULT 0,
+    attempts_inside_penalty_area    NUMBER  DEFAULT 0,
+    attempts_outside_penalty_area   NUMBER  DEFAULT 0,
+    goals_inside_penalty_area       NUMBER  DEFAULT 0,
+    goals_outside_penalty_area      NUMBER  DEFAULT 0
+);
+
+-- -------------------------------------------------------------
+-- MATCH_TEAM_POSSESSION_STATS
+-- -------------------------------------------------------------
+CREATE TABLE MATCH_TEAM_POSSESSION_STATS (
+    possession_id               NUMBER          GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_team_id               NUMBER          NOT NULL REFERENCES MATCH_TEAM(match_team_id),
+    possession_pct              VARCHAR2(6),
+    possession_in_contest       NUMBER          DEFAULT 0,
+    passes                      NUMBER          DEFAULT 0,
+    passes_completed            NUMBER          DEFAULT 0,
+    crosses                     NUMBER          DEFAULT 0,
+    crosses_completed           NUMBER          DEFAULT 0,
+    switches_of_play_completed  NUMBER          DEFAULT 0,
+    corners                     NUMBER          DEFAULT 0,
+    free_kicks                  NUMBER          DEFAULT 0,
+    offsides                    NUMBER          DEFAULT 0,
+    total_offers_to_receive     NUMBER          DEFAULT 0,
+    inbehind_offers_to_receive  NUMBER          DEFAULT 0,
+    inbetween_offers_to_receive NUMBER          DEFAULT 0,
+    infront_offers_to_receive   NUMBER          DEFAULT 0,
+    receptions_mid_def_lines    NUMBER          DEFAULT 0
+);
+
+-- -------------------------------------------------------------
+-- MATCH_TEAM_DEFENSIVE_STATS
+-- -------------------------------------------------------------
+CREATE TABLE MATCH_TEAM_DEFENSIVE_STATS (
+    defensive_id                NUMBER  GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_team_id               NUMBER  NOT NULL REFERENCES MATCH_TEAM(match_team_id),
+    goal_preventions            NUMBER  DEFAULT 0,
+    forced_turnovers            NUMBER  DEFAULT 0,
+    defensive_pressures_applied NUMBER  DEFAULT 0
+);
+
+-- -------------------------------------------------------------
+-- MATCH_TEAM_DISCIPLINE_STATS
+-- -------------------------------------------------------------
+CREATE TABLE MATCH_TEAM_DISCIPLINE_STATS (
+    discipline_id   NUMBER  GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_team_id   NUMBER  NOT NULL REFERENCES MATCH_TEAM(match_team_id),
+    yellow_cards    NUMBER  DEFAULT 0,
+    red_cards       NUMBER  DEFAULT 0,
+    fouls_against   NUMBER  DEFAULT 0
+);
+
+-- -------------------------------------------------------------
+-- MATCH_TEAM_CHANNEL_STATS
+-- -------------------------------------------------------------
+CREATE TABLE MATCH_TEAM_CHANNEL_STATS (
+    channel_id              NUMBER  GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_team_id           NUMBER  NOT NULL REFERENCES MATCH_TEAM(match_team_id),
+    left_channel            NUMBER  DEFAULT 0,
+    left_inside_channel     NUMBER  DEFAULT 0,
+    central_channel         NUMBER  DEFAULT 0,
+    right_inside_channel    NUMBER  DEFAULT 0,
+    right_channel           NUMBER  DEFAULT 0
+);
+
+-- -------------------------------------------------------------
+-- MATCH_TEAM_LINE_BREAK_STATS
+-- -------------------------------------------------------------
+CREATE TABLE MATCH_TEAM_LINE_BREAK_STATS (
+    line_break_id               NUMBER  GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_team_id               NUMBER  NOT NULL REFERENCES MATCH_TEAM(match_team_id),
+    attempted_line_breaks       NUMBER  DEFAULT 0,
+    completed_line_breaks       NUMBER  DEFAULT 0,
+    attempted_def_line_breaks   NUMBER  DEFAULT 0,
+    completed_def_line_breaks   NUMBER  DEFAULT 0
+);
+
+-- =============================================================
+-- SEED DATA — FIFA World Cup 2022
+-- =============================================================
+
+-- Tournament
+INSERT INTO TOURNAMENT (name, year, host_country)
+VALUES ('FIFA World Cup', 2022, 'Qatar');
+
+-- Stages
+INSERT INTO STAGE (tournament_id, stage_name, stage_order) VALUES (1, 'Group Stage', 1);
+INSERT INTO STAGE (tournament_id, stage_name, stage_order) VALUES (1, 'Round of 16', 2);
+INSERT INTO STAGE (tournament_id, stage_name, stage_order) VALUES (1, 'Quarter-Finals', 3);
+INSERT INTO STAGE (tournament_id, stage_name, stage_order) VALUES (1, 'Semi-Finals', 4);
+INSERT INTO STAGE (tournament_id, stage_name, stage_order) VALUES (1, 'Third Place Play-Off', 5);
+INSERT INTO STAGE (tournament_id, stage_name, stage_order) VALUES (1, 'Final', 6);
+
+-- Teams (32 nations)
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Qatar',       'AFC',     'A');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Ecuador',     'CONMEBOL','A');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Senegal',     'CAF',     'A');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Netherlands', 'UEFA',    'A');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('England',     'UEFA',    'B');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Iran',        'AFC',     'B');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('USA',         'CONCACAF','B');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Wales',       'UEFA',    'B');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Argentina',   'CONMEBOL','C');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Saudi Arabia','AFC',     'C');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Mexico',      'CONCACAF','C');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Poland',      'UEFA',    'C');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('France',      'UEFA',    'D');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Australia',   'AFC',     'D');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Denmark',     'UEFA',    'D');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Tunisia',     'CAF',     'D');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Spain',       'UEFA',    'E');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Costa Rica',  'CONCACAF','E');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Germany',     'UEFA',    'E');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Japan',       'AFC',     'E');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Belgium',     'UEFA',    'F');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Canada',      'CONCACAF','F');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Morocco',     'CAF',     'F');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Croatia',     'UEFA',    'F');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Brazil',      'CONMEBOL','G');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Serbia',      'UEFA',    'G');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Switzerland', 'UEFA',    'G');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Cameroon',    'CAF',     'G');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Portugal',    'UEFA',    'H');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Ghana',       'CAF',     'H');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('Uruguay',     'CONMEBOL','H');
+INSERT INTO TEAM (team_name, region, group_letter) VALUES ('South Korea', 'AFC',     'H');
+
+-- Sample Matches (opening + final + key fixtures)
+-- Group Stage
+INSERT INTO MATCH (stage_id, match_date, match_hour) VALUES (1, DATE '2022-11-20', '19:00');  -- QAT vs ECU
+INSERT INTO MATCH (stage_id, match_date, match_hour) VALUES (1, DATE '2022-11-22', '13:00');  -- ENG vs IRN
+INSERT INTO MATCH (stage_id, match_date, match_hour) VALUES (1, DATE '2022-11-22', '22:00');  -- ARG vs KSA
+INSERT INTO MATCH (stage_id, match_date, match_hour) VALUES (1, DATE '2022-11-23', '22:00');  -- FRA vs AUS
+INSERT INTO MATCH (stage_id, match_date, match_hour) VALUES (1, DATE '2022-12-02', '22:00');  -- JPN vs ESP
+-- Final
+INSERT INTO MATCH (stage_id, match_date, match_hour) VALUES (6, DATE '2022-12-18', '18:00');  -- ARG vs FRA
+
+-- MATCH_TEAM rows (who played in each match)
+-- Match 1: Qatar(1) vs Ecuador(2)
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (1, 1, 'Y');
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (1, 2, 'N');
+-- Match 2: England(5) vs Iran(6)
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (2, 5, 'Y');
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (2, 6, 'N');
+-- Match 3: Argentina(9) vs Saudi Arabia(10)
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (3, 9, 'Y');
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (3, 10, 'N');
+-- Match 4: France(13) vs Australia(14)
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (4, 13, 'Y');
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (4, 14, 'N');
+-- Match 5: Japan(20) vs Spain(17)
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (5, 20, 'Y');
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (5, 17, 'N');
+-- Match 6 (Final): Argentina(9) vs France(13)
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (6, 9, 'Y');
+INSERT INTO MATCH_TEAM (match_id, team_id, is_team1) VALUES (6, 13, 'N');
+
+-- SCORES (match_team_id 1-12 in insertion order above)
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (1, 0, 2, 0, 0, 0, 1);   -- Qatar
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (2, 2, 0, 2, 0, 1, 2);   -- Ecuador
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (3, 6, 2, 5, 0, 0, 3);   -- England
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (4, 2, 6, 1, 0, 2, 1);   -- Iran
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (5, 1, 2, 0, 0, 0, 2);   -- Argentina
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (6, 2, 1, 1, 0, 0, 4);   -- Saudi Arabia
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (7, 4, 1, 3, 0, 0, 2);   -- France
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (8, 1, 4, 0, 1, 0, 1);   -- Australia
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (9, 2, 1, 2, 0, 0, 3);   -- Japan (upset vs Spain)
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (10, 1, 2, 1, 0, 0, 2);  -- Spain
+-- Final: Argentina 3 - 3 France (ARG win on pens)
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (11, 3, 3, 2, 2, 0, 4);  -- Argentina
+INSERT INTO MATCH_TEAM_SCORE (match_team_id, goals, goals_conceded, assists, penalties_scored, own_goals, goal_preventions)
+VALUES (12, 3, 3, 1, 1, 0, 3);  -- France
+
+-- DISCIPLINE (sample for key matches)
+INSERT INTO MATCH_TEAM_DISCIPLINE_STATS (match_team_id, yellow_cards, red_cards, fouls_against)
+VALUES (3, 1, 0, 12);  -- England
+INSERT INTO MATCH_TEAM_DISCIPLINE_STATS (match_team_id, yellow_cards, red_cards, fouls_against)
+VALUES (4, 2, 0, 14);  -- Iran
+INSERT INTO MATCH_TEAM_DISCIPLINE_STATS (match_team_id, yellow_cards, red_cards, fouls_against)
+VALUES (11, 1, 0, 10); -- Argentina (Final)
+INSERT INTO MATCH_TEAM_DISCIPLINE_STATS (match_team_id, yellow_cards, red_cards, fouls_against)
+VALUES (12, 2, 0, 11); -- France (Final)
+
+-- POSSESSION (sample)
+INSERT INTO MATCH_TEAM_POSSESSION_STATS
+    (match_team_id, possession_pct, passes, passes_completed, corners, offsides, free_kicks)
+VALUES (3, '75%', 621, 567, 7, 2, 11);  -- England
+INSERT INTO MATCH_TEAM_POSSESSION_STATS
+    (match_team_id, possession_pct, passes, passes_completed, corners, offsides, free_kicks)
+VALUES (4, '25%', 210, 178, 1, 5, 14);  -- Iran
+
+COMMIT;

@@ -1,0 +1,285 @@
+-- =============================================================
+-- IS480 — Advanced Database Management | Spring 2026
+-- FIFA World Cup 2022 — Test Script
+-- Phase 1: test_script.sql
+-- Run AFTER schema.sql, package_spec.sql, and package_body.sql
+-- =============================================================
+
+SET SERVEROUTPUT ON SIZE UNLIMITED;
+
+-- =============================================================
+-- SECTION 1: TEST FUNCTIONS
+-- =============================================================
+
+PROMPT ============================================================
+PROMPT TEST 1A: get_team_total_goals — Argentina (team_id = 9)
+PROMPT Expected: goals from all Argentina matches
+PROMPT ============================================================
+DECLARE
+    v_result NUMBER;
+BEGIN
+    v_result := wc_analytics.get_team_total_goals(9);
+    DBMS_OUTPUT.PUT_LINE('Argentina total goals: ' || v_result);
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 1B: get_team_total_goals — non-existent team (999)
+PROMPT Expected: returns 0 (handled gracefully)
+PROMPT ============================================================
+DECLARE
+    v_result NUMBER;
+BEGIN
+    v_result := wc_analytics.get_team_total_goals(999);
+    DBMS_OUTPUT.PUT_LINE('Non-existent team total goals: ' || v_result);
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 2A: get_goal_difference — France (team_id = 13)
+PROMPT Expected: goals scored minus goals conceded
+PROMPT ============================================================
+DECLARE
+    v_result NUMBER;
+BEGIN
+    v_result := wc_analytics.get_goal_difference(13);
+    DBMS_OUTPUT.PUT_LINE('France goal difference: ' || v_result);
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 2B: get_goal_difference — England (team_id = 5)
+PROMPT ============================================================
+DECLARE
+    v_result NUMBER;
+BEGIN
+    v_result := wc_analytics.get_goal_difference(5);
+    DBMS_OUTPUT.PUT_LINE('England goal difference: ' || v_result);
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 3A: get_discipline_score — England (team_id = 5)
+PROMPT Expected: weighted score (1 yellow = 1 + fouls/10)
+PROMPT ============================================================
+DECLARE
+    v_result NUMBER;
+BEGIN
+    v_result := wc_analytics.get_discipline_score(5);
+    DBMS_OUTPUT.PUT_LINE('England discipline score: ' || v_result);
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 3B: get_discipline_score — Iran (team_id = 6)
+PROMPT Expected: higher score (2 yellows + more fouls)
+PROMPT ============================================================
+DECLARE
+    v_result NUMBER;
+BEGIN
+    v_result := wc_analytics.get_discipline_score(6);
+    DBMS_OUTPUT.PUT_LINE('Iran discipline score: ' || v_result);
+END;
+/
+
+-- =============================================================
+-- SECTION 2: TEST PROCEDURE — record_match_result
+-- =============================================================
+
+PROMPT ============================================================
+PROMPT TEST 4A: record_match_result — New valid match entry
+PROMPT Inserting: Netherlands (team_id=4) vs Qatar (team_id=1), 
+PROMPT a new group stage match
+PROMPT ============================================================
+DECLARE
+    v_new_match_id MATCH.match_id%TYPE;
+BEGIN
+    -- First create a new match to record into
+    INSERT INTO MATCH (stage_id, match_date, match_hour)
+    VALUES (1, DATE '2022-11-29', '22:00')
+    RETURNING match_id INTO v_new_match_id;
+    COMMIT;
+    DBMS_OUTPUT.PUT_LINE('Created new match ID: ' || v_new_match_id);
+
+    -- Record Netherlands result
+    wc_analytics.record_match_result(
+        p_match_id       => v_new_match_id,
+        p_team_id        => 4,   -- Netherlands
+        p_is_team1       => 'Y',
+        p_goals          => 2,
+        p_goals_conceded => 0,
+        p_assists        => 2,
+        p_yellow_cards   => 1,
+        p_red_cards      => 0,
+        p_fouls          => 9
+    );
+
+    -- Record Qatar result
+    wc_analytics.record_match_result(
+        p_match_id       => v_new_match_id,
+        p_team_id        => 1,   -- Qatar
+        p_is_team1       => 'N',
+        p_goals          => 0,
+        p_goals_conceded => 2,
+        p_assists        => 0,
+        p_yellow_cards   => 2,
+        p_red_cards      => 0,
+        p_fouls          => 13
+    );
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 4B: record_match_result — DUPLICATE ENTRY (should fail)
+PROMPT Expected: RAISE_APPLICATION_ERROR -20001
+PROMPT ============================================================
+BEGIN
+    -- Attempt to re-insert Netherlands for match_id=1 (already seeded)
+    wc_analytics.record_match_result(
+        p_match_id       => 1,
+        p_team_id        => 1,   -- Qatar already in match 1
+        p_is_team1       => 'Y',
+        p_goals          => 0,
+        p_goals_conceded => 2,
+        p_assists        => 0,
+        p_yellow_cards   => 0,
+        p_red_cards      => 0,
+        p_fouls          => 5
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Caught expected error: ' || SQLERRM);
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 4C: record_match_result — INVALID MATCH ID
+PROMPT Expected: RAISE_APPLICATION_ERROR -20002
+PROMPT ============================================================
+BEGIN
+    wc_analytics.record_match_result(
+        p_match_id       => 9999,
+        p_team_id        => 9,
+        p_is_team1       => 'Y',
+        p_goals          => 1,
+        p_goals_conceded => 0,
+        p_assists        => 1,
+        p_yellow_cards   => 0,
+        p_red_cards      => 0,
+        p_fouls          => 4
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Caught expected error: ' || SQLERRM);
+END;
+/
+
+-- =============================================================
+-- SECTION 3: TEST PROCEDURE — advance_team_to_stage
+-- =============================================================
+
+PROMPT ============================================================
+PROMPT TEST 5A: advance_team_to_stage — valid advancement
+PROMPT Argentina (9) advancing to Round of 16 (stage_id=2)
+PROMPT ============================================================
+DECLARE
+    v_r16_match_id MATCH.match_id%TYPE;
+BEGIN
+    -- Create a Round of 16 match first
+    INSERT INTO MATCH (stage_id, match_date, match_hour)
+    VALUES (2, DATE '2022-12-03', '18:00')
+    RETURNING match_id INTO v_r16_match_id;
+    COMMIT;
+
+    wc_analytics.advance_team_to_stage(
+        p_team_id       => 9,    -- Argentina
+        p_next_stage_id => 2,    -- Round of 16
+        p_match_id      => v_r16_match_id
+    );
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 5B: advance_team_to_stage — INVALID STAGE
+PROMPT Expected: RAISE_APPLICATION_ERROR -20010
+PROMPT ============================================================
+BEGIN
+    wc_analytics.advance_team_to_stage(
+        p_team_id       => 9,
+        p_next_stage_id => 99,   -- Non-existent stage
+        p_match_id      => 1
+    );
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Caught expected error: ' || SQLERRM);
+END;
+/
+
+-- =============================================================
+-- SECTION 4: TEST PROCEDURE — print_group_report (explicit cursor)
+-- =============================================================
+
+PROMPT ============================================================
+PROMPT TEST 6A: print_group_report — Group B
+PROMPT Expected: England, Iran, USA, Wales with stats
+PROMPT ============================================================
+BEGIN
+    wc_analytics.print_group_report('B');
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 6B: print_group_report — Group D (France)
+PROMPT ============================================================
+BEGIN
+    wc_analytics.print_group_report('D');
+END;
+/
+
+PROMPT ============================================================
+PROMPT TEST 6C: print_group_report — INVALID GROUP
+PROMPT Expected: RAISE_APPLICATION_ERROR -20020
+PROMPT ============================================================
+BEGIN
+    wc_analytics.print_group_report('Z');
+EXCEPTION
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Caught expected error: ' || SQLERRM);
+END;
+/
+
+-- =============================================================
+-- SECTION 5: VERIFICATION QUERIES
+-- =============================================================
+
+PROMPT ============================================================
+PROMPT VERIFICATION: All teams with their goal totals
+PROMPT ============================================================
+SELECT
+    t.team_name,
+    t.group_letter,
+    wc_analytics.get_team_total_goals(t.team_id)  AS total_goals,
+    wc_analytics.get_goal_difference(t.team_id)   AS goal_diff,
+    wc_analytics.get_discipline_score(t.team_id)  AS discipline_score
+FROM TEAM t
+ORDER BY t.group_letter, total_goals DESC;
+
+PROMPT ============================================================
+PROMPT VERIFICATION: All matches with scores
+PROMPT ============================================================
+SELECT
+    m.match_id,
+    s.stage_name,
+    t.team_name,
+    sc.goals,
+    sc.goals_conceded,
+    sc.assists,
+    d.yellow_cards,
+    d.red_cards
+FROM MATCH m
+JOIN STAGE s ON m.stage_id = s.stage_id
+JOIN MATCH_TEAM mt ON m.match_id = mt.match_id
+JOIN TEAM t ON mt.team_id = t.team_id
+LEFT JOIN MATCH_TEAM_SCORE sc ON mt.match_team_id = sc.match_team_id
+LEFT JOIN MATCH_TEAM_DISCIPLINE_STATS d ON mt.match_team_id = d.match_team_id
+ORDER BY m.match_id, mt.is_team1 DESC;
