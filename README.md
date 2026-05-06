@@ -1,4 +1,4 @@
-# Enterprise-Database-Analytics-Platform
+# WorldCup-Database-Analytics-Platform
 # World Cup Data Platform (OLTP → Warehouse → Spark)
 
 ## Overview
