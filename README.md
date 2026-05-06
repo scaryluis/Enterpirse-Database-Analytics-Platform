@@ -4,8 +4,6 @@
 ## Overview
 This project builds an end-to-end data pipeline using FIFA World Cup data. It starts with a normalized OLTP database, transforms it into a star schema data warehouse, and performs scalable analysis in Databricks using Spark and Python.
 
-------
-
 ## Tech Stack
 - SQL (Oracle + Spark SQL)  
 - Python (PySpark)  
@@ -13,8 +11,6 @@ This project builds an end-to-end data pipeline using FIFA World Cup data. It st
 - Apache Spark  
 - ETL & Data Warehousing
 - Draw.io
-
----
 
 ## Phase 1 — OLTP (Oracle + PL/SQL)
 - Built a normalized (3NF) database for tournaments, teams, matches, and stats  
