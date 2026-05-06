@@ -1,0 +1,215 @@
+-- =============================================================
+-- IS480 - Advanced Database Management | Spring 2026
+-- FIFA World Cup 2022 - Phase 2 Data Warehouse Star Schema
+-- File: warehouse_schema.sql
+--
+-- Grain of fact table:
+--   One row per team per match.
+-- =============================================================
+
+-- -------------------------------------------------------------
+-- Drop warehouse tables in reverse dependency order
+-- -------------------------------------------------------------
+BEGIN
+    FOR t IN (
+        SELECT table_name
+        FROM user_tables
+        WHERE table_name IN (
+            'FACT_MATCH_TEAM_PERFORMANCE',
+            'DIM_MATCH',
+            'DIM_DATE',
+            'DIM_TEAM',
+            'DIM_STAGE',
+            'DIM_TOURNAMENT'
+        )
+    ) LOOP
+        EXECUTE IMMEDIATE 'DROP TABLE ' || t.table_name || ' CASCADE CONSTRAINTS';
+    END LOOP;
+END;
+/
+
+-- -------------------------------------------------------------
+-- DIM_TOURNAMENT
+-- Describes the tournament context for match performance.
+-- -------------------------------------------------------------
+CREATE TABLE DIM_TOURNAMENT (
+    tournament_key  NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tournament_id   NUMBER,
+    tournament_name VARCHAR2(100) NOT NULL,
+    tournament_year NUMBER(4) NOT NULL,
+    host_country    VARCHAR2(100) NOT NULL,
+
+    CONSTRAINT uq_dim_tournament_source UNIQUE (tournament_id)
+);
+
+-- -------------------------------------------------------------
+-- DIM_STAGE
+-- Describes tournament stage, such as Group Stage or Final.
+-- -------------------------------------------------------------
+CREATE TABLE DIM_STAGE (
+    stage_key       NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    stage_id        NUMBER,
+    stage_name      VARCHAR2(100) NOT NULL,
+    stage_order     NUMBER NOT NULL,
+
+    CONSTRAINT uq_dim_stage_source UNIQUE (stage_id)
+);
+
+-- -------------------------------------------------------------
+-- DIM_TEAM
+-- Describes a national team.
+-- -------------------------------------------------------------
+CREATE TABLE DIM_TEAM (
+    team_key     NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    team_id      NUMBER,
+    team_name    VARCHAR2(100) NOT NULL,
+    region       VARCHAR2(100),
+    group_letter VARCHAR2(2),
+
+    CONSTRAINT uq_dim_team_source UNIQUE (team_id)
+);
+
+-- -------------------------------------------------------------
+-- DIM_DATE
+-- Calendar dimension for match dates.
+-- date_key format: YYYYMMDD
+-- -------------------------------------------------------------
+CREATE TABLE DIM_DATE (
+    date_key     NUMBER PRIMARY KEY,
+    full_date    DATE NOT NULL,
+    day_number   NUMBER NOT NULL,
+    month_number NUMBER NOT NULL,
+    month_name   VARCHAR2(20) NOT NULL,
+    year_number  NUMBER NOT NULL,
+    quarter_num  NUMBER NOT NULL,
+    day_name     VARCHAR2(20) NOT NULL,
+
+    CONSTRAINT uq_dim_date_full_date UNIQUE (full_date)
+);
+
+-- -------------------------------------------------------------
+-- DIM_MATCH
+-- Describes the match event. Stage/date are also kept in the
+-- fact table as foreign keys for direct star-schema analysis.
+-- -------------------------------------------------------------
+CREATE TABLE DIM_MATCH (
+    match_key   NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    match_id    NUMBER,
+    match_date  DATE NOT NULL,
+    match_hour  VARCHAR2(10),
+
+    CONSTRAINT uq_dim_match_source UNIQUE (match_id)
+);
+
+-- -------------------------------------------------------------
+-- FACT_MATCH_TEAM_PERFORMANCE
+-- One row per team per match. Measures are pulled from the
+-- Phase 1 OLTP match-team stat tables.
+-- -------------------------------------------------------------
+CREATE TABLE FACT_MATCH_TEAM_PERFORMANCE (
+    fact_id        NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+
+    tournament_key NUMBER NOT NULL,
+    stage_key      NUMBER NOT NULL,
+    date_key       NUMBER NOT NULL,
+    match_key      NUMBER NOT NULL,
+    team_key       NUMBER NOT NULL,
+
+    match_team_id  NUMBER,
+    is_team1       CHAR(1),
+
+    goals               NUMBER DEFAULT 0,
+    goals_conceded      NUMBER DEFAULT 0,
+    assists             NUMBER DEFAULT 0,
+    penalties_scored    NUMBER DEFAULT 0,
+    own_goals           NUMBER DEFAULT 0,
+    goal_preventions    NUMBER DEFAULT 0,
+
+    total_attempts                  NUMBER DEFAULT 0,
+    on_target_attempts              NUMBER DEFAULT 0,
+    off_target_attempts             NUMBER DEFAULT 0,
+    attempts_inside_penalty_area    NUMBER DEFAULT 0,
+    attempts_outside_penalty_area   NUMBER DEFAULT 0,
+    goals_inside_penalty_area       NUMBER DEFAULT 0,
+    goals_outside_penalty_area      NUMBER DEFAULT 0,
+
+    possession_pct              NUMBER(5,2),
+    possession_in_contest       NUMBER DEFAULT 0,
+    passes                      NUMBER DEFAULT 0,
+    passes_completed            NUMBER DEFAULT 0,
+    crosses                     NUMBER DEFAULT 0,
+    crosses_completed           NUMBER DEFAULT 0,
+    switches_of_play_completed  NUMBER DEFAULT 0,
+    corners                     NUMBER DEFAULT 0,
+    free_kicks                  NUMBER DEFAULT 0,
+    offsides                    NUMBER DEFAULT 0,
+    total_offers_to_receive     NUMBER DEFAULT 0,
+    inbehind_offers_to_receive  NUMBER DEFAULT 0,
+    inbetween_offers_to_receive NUMBER DEFAULT 0,
+    infront_offers_to_receive   NUMBER DEFAULT 0,
+    receptions_mid_def_lines    NUMBER DEFAULT 0,
+
+    defensive_goal_preventions  NUMBER DEFAULT 0,
+    forced_turnovers            NUMBER DEFAULT 0,
+    defensive_pressures_applied NUMBER DEFAULT 0,
+
+    yellow_cards  NUMBER DEFAULT 0,
+    red_cards     NUMBER DEFAULT 0,
+    fouls_against NUMBER DEFAULT 0,
+
+    left_channel         NUMBER DEFAULT 0,
+    left_inside_channel  NUMBER DEFAULT 0,
+    central_channel      NUMBER DEFAULT 0,
+    right_inside_channel NUMBER DEFAULT 0,
+    right_channel        NUMBER DEFAULT 0,
+
+    attempted_line_breaks     NUMBER DEFAULT 0,
+    completed_line_breaks     NUMBER DEFAULT 0,
+    attempted_def_line_breaks NUMBER DEFAULT 0,
+    completed_def_line_breaks NUMBER DEFAULT 0,
+
+    CONSTRAINT fk_fact_tournament
+        FOREIGN KEY (tournament_key)
+        REFERENCES DIM_TOURNAMENT(tournament_key),
+
+    CONSTRAINT fk_fact_stage
+        FOREIGN KEY (stage_key)
+        REFERENCES DIM_STAGE(stage_key),
+
+    CONSTRAINT fk_fact_date
+        FOREIGN KEY (date_key)
+        REFERENCES DIM_DATE(date_key),
+
+    CONSTRAINT fk_fact_match
+        FOREIGN KEY (match_key)
+        REFERENCES DIM_MATCH(match_key),
+
+    CONSTRAINT fk_fact_team
+        FOREIGN KEY (team_key)
+        REFERENCES DIM_TEAM(team_key),
+
+    CONSTRAINT ck_fact_is_team1
+        CHECK (is_team1 IN ('Y', 'N')),
+
+    CONSTRAINT uq_fact_match_team_source
+        UNIQUE (match_team_id)
+);
+
+-- -------------------------------------------------------------
+-- Helpful warehouse indexes
+-- -------------------------------------------------------------
+CREATE INDEX idx_fact_team_key
+    ON FACT_MATCH_TEAM_PERFORMANCE(team_key);
+
+CREATE INDEX idx_fact_match_key
+    ON FACT_MATCH_TEAM_PERFORMANCE(match_key);
+
+CREATE INDEX idx_fact_stage_key
+    ON FACT_MATCH_TEAM_PERFORMANCE(stage_key);
+
+CREATE INDEX idx_fact_date_key
+    ON FACT_MATCH_TEAM_PERFORMANCE(date_key);
+
+CREATE INDEX idx_fact_tournament_key
+    ON FACT_MATCH_TEAM_PERFORMANCE(tournament_key);
+

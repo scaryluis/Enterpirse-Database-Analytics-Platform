@@ -1,0 +1,192 @@
+-- =============================================================
+-- IS480 - Advanced Database Management | Spring 2026
+-- FIFA World Cup 2022 - Phase 2 Analytical Queries
+-- File: analysis_queries.sql
+--
+--These analytical queries are based on our Star Schema
+-- =============================================================
+
+-- -------------------------------------------------------------
+-- QUERY 1: Total goals by stage using ROLLUP
+-- Purpose:
+--   See how total scoring changes across tournament stages,
+--   with a grand total row included by ROLLUP.
+-- -------------------------------------------------------------
+SELECT
+    NVL(ds.stage_name, 'ALL STAGES') AS stage_name,
+    SUM(f.goals) AS total_goals
+FROM FACT_MATCH_TEAM_PERFORMANCE f
+JOIN DIM_STAGE ds
+    ON f.stage_key = ds.stage_key
+GROUP BY ROLLUP(ds.stage_name)
+ORDER BY
+    CASE WHEN ds.stage_name IS NULL THEN 1 ELSE 0 END,
+    MIN(ds.stage_order);
+
+
+-- -------------------------------------------------------------
+-- QUERY 2: Top 5 teams by defensive efficiency within each stage
+-- using RANK() OVER (PARTITION BY ...)
+-- Purpose:
+--   Rank teams by fewest shots conceded in each stage.
+--   Since the fact table stores a team's own attempts, we treat
+--   opponent shot attempts in the same match as shots conceded.
+-- -------------------------------------------------------------
+WITH stage_team_defense AS (
+    SELECT
+        ds.stage_name,
+        dt.team_name,
+        SUM(opp.total_attempts) AS shots_conceded,
+        RANK() OVER (
+            PARTITION BY ds.stage_name
+            ORDER BY SUM(opp.total_attempts) ASC
+        ) AS defensive_rank
+    FROM FACT_MATCH_TEAM_PERFORMANCE f
+    JOIN FACT_MATCH_TEAM_PERFORMANCE opp
+        ON f.match_key = opp.match_key
+       AND f.team_key <> opp.team_key
+    JOIN DIM_STAGE ds
+        ON f.stage_key = ds.stage_key
+    JOIN DIM_TEAM dt
+        ON f.team_key = dt.team_key
+    GROUP BY ds.stage_name, dt.team_name
+)
+SELECT
+    stage_name,
+    team_name,
+    shots_conceded,
+    defensive_rank
+FROM stage_team_defense
+WHERE defensive_rank <= 5
+ORDER BY stage_name, defensive_rank, team_name;
+
+
+-- -------------------------------------------------------------
+-- QUERY 3: Pass completion rate vs match result using CUBE
+-- Purpose:
+--   Explore whether cleaner passing aligns with winning.
+--   Teams are bucketed by pass-completion percentage, then CUBE
+--   generates subtotals across pass bucket and result.
+-- -------------------------------------------------------------
+WITH team_results AS (
+    SELECT
+        CASE
+            WHEN NVL(f.passes, 0) = 0 THEN 'No Passing Data'
+            WHEN (f.passes_completed / NULLIF(f.passes, 0)) * 100 >= 85 THEN '85%+ Completion'
+            WHEN (f.passes_completed / NULLIF(f.passes, 0)) * 100 >= 70 THEN '70-84.99% Completion'
+            ELSE 'Below 70% Completion'
+        END AS pass_completion_bucket,
+        CASE
+            WHEN f.goals > f.goals_conceded THEN 'Win'
+            WHEN f.goals = f.goals_conceded THEN 'Draw'
+            ELSE 'Loss'
+        END AS match_result
+    FROM FACT_MATCH_TEAM_PERFORMANCE f
+)
+SELECT
+    NVL(pass_completion_bucket, 'ALL PASS BUCKETS') AS pass_completion_bucket,
+    NVL(match_result, 'ALL RESULTS') AS match_result,
+    COUNT(*) AS team_match_rows
+FROM team_results
+GROUP BY CUBE(pass_completion_bucket, match_result)
+ORDER BY pass_completion_bucket, match_result;
+
+
+-- -------------------------------------------------------------
+-- QUERY 4: CASE-based playing style classification and wins
+-- Purpose:
+--   Label each team-match performance as possession-dominant,
+--   counter-attack, or balanced, then count wins by style.
+-- -------------------------------------------------------------
+WITH style_labeled AS (
+    SELECT
+        dt.team_name,
+        CASE
+            WHEN NVL(f.possession_pct, 0) >= 60
+                 AND NVL(f.passes, 0) >= 400 THEN 'Possession-Dominant'
+            WHEN NVL(f.possession_pct, 0) < 45
+                 AND NVL(f.total_attempts, 0) >= 8 THEN 'Counter-Attack'
+            ELSE 'Balanced'
+        END AS play_style,
+        CASE
+            WHEN f.goals > f.goals_conceded THEN 1
+            ELSE 0
+        END AS win_flag
+    FROM FACT_MATCH_TEAM_PERFORMANCE f
+    JOIN DIM_TEAM dt
+        ON f.team_key = dt.team_key
+)
+SELECT
+    play_style,
+    COUNT(*) AS total_team_match_rows,
+    SUM(win_flag) AS total_wins
+FROM style_labeled
+GROUP BY play_style
+ORDER BY total_wins DESC, total_team_match_rows DESC;
+
+
+-- -------------------------------------------------------------
+-- QUERY 5: Efficiency outliers using a subquery
+-- Purpose:
+--   Find teams whose goals-per-attempt efficiency is above the
+--   tournament-wide average efficiency.
+-- -------------------------------------------------------------
+WITH team_efficiency AS (
+    SELECT
+        dt.team_name,
+        SUM(f.goals) AS total_goals,
+        SUM(f.total_attempts) AS total_attempts,
+        ROUND(SUM(f.goals) / NULLIF(SUM(f.total_attempts), 0), 4) AS goals_per_attempt
+    FROM FACT_MATCH_TEAM_PERFORMANCE f
+    JOIN DIM_TEAM dt
+        ON f.team_key = dt.team_key
+    GROUP BY dt.team_name
+)
+SELECT
+    team_name,
+    total_goals,
+    total_attempts,
+    goals_per_attempt
+FROM team_efficiency
+WHERE goals_per_attempt > (
+    SELECT AVG(goals_per_attempt)
+    FROM team_efficiency
+    WHERE goals_per_attempt IS NOT NULL
+)
+ORDER BY goals_per_attempt DESC, total_goals DESC;
+
+
+-- -------------------------------------------------------------
+-- QUERY 6: Bonus query - monthly goal totals by team with RANK
+-- Purpose:
+--   Show which teams scored the most within each month of the
+--   tournament timeline.
+-- -------------------------------------------------------------
+WITH monthly_team_scoring AS (
+    SELECT
+        dd.year_number,
+        dd.month_number,
+        dd.month_name,
+        dt.team_name,
+        SUM(f.goals) AS total_goals,
+        RANK() OVER (
+            PARTITION BY dd.year_number, dd.month_number
+            ORDER BY SUM(f.goals) DESC
+        ) AS monthly_rank
+    FROM FACT_MATCH_TEAM_PERFORMANCE f
+    JOIN DIM_DATE dd
+        ON f.date_key = dd.date_key
+    JOIN DIM_TEAM dt
+        ON f.team_key = dt.team_key
+    GROUP BY dd.year_number, dd.month_number, dd.month_name, dt.team_name
+)
+SELECT
+    year_number,
+    month_number,
+    month_name,
+    team_name,
+    total_goals,
+    monthly_rank
+FROM monthly_team_scoring
+WHERE monthly_rank <= 5
+ORDER BY year_number, month_number, monthly_rank, team_name;

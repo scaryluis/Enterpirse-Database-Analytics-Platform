@@ -1,0 +1,413 @@
+    -- =============================================================
+    -- IS480 - Advanced Database Management | Spring 2026
+    -- FIFA World Cup 2022 - Phase 2 ETL Procedures
+    -- File: etl_procedures.sql
+    --
+    -- Purpose:
+    --   Extract data from the Phase 1 OLTP schema,
+    --   transform it into star-schema format,
+    --   and load it into the Phase 2 warehouse tables.
+    --
+    -- Warehouse grain:
+    --   One row per team per match in FACT_MATCH_TEAM_PERFORMANCE.
+    --
+    -- Run AFTER:
+    --   1. schema.sql
+    --   2. warehouse_schema.sql
+    -- =============================================================
+
+    SET SERVEROUTPUT ON SIZE UNLIMITED;
+
+    -- -------------------------------------------------------------
+    -- PROCEDURE: reset_warehouse_data
+    --   Clears warehouse tables in safe dependency order.
+    --   This implements a full-refresh ETL pattern.
+    -- -------------------------------------------------------------
+    CREATE OR REPLACE PROCEDURE reset_warehouse_data AS
+    BEGIN
+        DELETE FROM FACT_MATCH_TEAM_PERFORMANCE;
+        DELETE FROM DIM_MATCH;
+        DELETE FROM DIM_DATE;
+        DELETE FROM DIM_TEAM;
+        DELETE FROM DIM_STAGE;
+        DELETE FROM DIM_TOURNAMENT;
+
+        COMMIT;
+        DBMS_OUTPUT.PUT_LINE('[reset_warehouse_data] Warehouse tables cleared successfully.');
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            DBMS_OUTPUT.PUT_LINE('[reset_warehouse_data] ERROR: ' || SQLERRM);
+            RAISE;
+    END reset_warehouse_data;
+    /
+
+    -- -------------------------------------------------------------
+    -- PROCEDURE: load_dim_tournament
+    --   Loads the tournament dimension from OLTP TOURNAMENT.
+    -- -------------------------------------------------------------
+    CREATE OR REPLACE PROCEDURE load_dim_tournament AS
+        v_rows_inserted NUMBER := 0;
+    BEGIN
+        INSERT INTO DIM_TOURNAMENT (
+            tournament_id,
+            tournament_name,
+            tournament_year,
+            host_country
+        )
+        SELECT
+            t.tournament_id,
+            t.name,
+            t.year,
+            t.host_country
+        FROM TOURNAMENT t;
+
+        v_rows_inserted := SQL%ROWCOUNT;
+        COMMIT;
+        DBMS_OUTPUT.PUT_LINE('[load_dim_tournament] Rows inserted: ' || v_rows_inserted);
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            DBMS_OUTPUT.PUT_LINE('[load_dim_tournament] ERROR: ' || SQLERRM);
+            RAISE;
+    END load_dim_tournament;
+    /
+
+    -- -------------------------------------------------------------
+    -- PROCEDURE: load_dim_stage
+    --   Loads tournament stages from OLTP STAGE.
+    -- -------------------------------------------------------------
+    CREATE OR REPLACE PROCEDURE load_dim_stage AS
+        v_rows_inserted NUMBER := 0;
+    BEGIN
+        INSERT INTO DIM_STAGE (
+            stage_id,
+            stage_name,
+            stage_order
+        )
+        SELECT
+            s.stage_id,
+            s.stage_name,
+            s.stage_order
+        FROM STAGE s;
+
+        v_rows_inserted := SQL%ROWCOUNT;
+        COMMIT;
+        DBMS_OUTPUT.PUT_LINE('[load_dim_stage] Rows inserted: ' || v_rows_inserted);
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            DBMS_OUTPUT.PUT_LINE('[load_dim_stage] ERROR: ' || SQLERRM);
+            RAISE;
+    END load_dim_stage;
+    /
+
+    -- -------------------------------------------------------------
+    -- PROCEDURE: load_dim_team
+    --   Loads teams from OLTP TEAM.
+    -- -------------------------------------------------------------
+    CREATE OR REPLACE PROCEDURE load_dim_team AS
+        v_rows_inserted NUMBER := 0;
+    BEGIN
+        INSERT INTO DIM_TEAM (
+            team_id,
+            team_name,
+            region,
+            group_letter
+        )
+        SELECT
+            tm.team_id,
+            tm.team_name,
+            tm.region,
+            tm.group_letter
+        FROM TEAM tm;
+
+        v_rows_inserted := SQL%ROWCOUNT;
+        COMMIT;
+        DBMS_OUTPUT.PUT_LINE('[load_dim_team] Rows inserted: ' || v_rows_inserted);
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            DBMS_OUTPUT.PUT_LINE('[load_dim_team] ERROR: ' || SQLERRM);
+            RAISE;
+    END load_dim_team;
+    /
+
+    -- -------------------------------------------------------------
+    -- PROCEDURE: load_dim_date
+    --   Loads one row per distinct match date from OLTP MATCH.
+    --   date_key format: YYYYMMDD
+    -- -------------------------------------------------------------
+    CREATE OR REPLACE PROCEDURE load_dim_date AS
+        v_rows_inserted NUMBER := 0;
+    BEGIN
+        INSERT INTO DIM_DATE (
+            date_key,
+            full_date,
+            day_number,
+            month_number,
+            month_name,
+            year_number,
+            quarter_num,
+            day_name
+        )
+        SELECT DISTINCT
+            TO_NUMBER(TO_CHAR(TRUNC(m.match_date), 'YYYYMMDD')) AS date_key,
+            TRUNC(m.match_date) AS full_date,
+            TO_NUMBER(TO_CHAR(TRUNC(m.match_date), 'DD')) AS day_number,
+            TO_NUMBER(TO_CHAR(TRUNC(m.match_date), 'MM')) AS month_number,
+            TO_CHAR(TRUNC(m.match_date), 'Month') AS month_name,
+            TO_NUMBER(TO_CHAR(TRUNC(m.match_date), 'YYYY')) AS year_number,
+            TO_NUMBER(TO_CHAR(TRUNC(m.match_date), 'Q')) AS quarter_num,
+            TO_CHAR(TRUNC(m.match_date), 'Day') AS day_name
+        FROM MATCH m;
+
+        v_rows_inserted := SQL%ROWCOUNT;
+        COMMIT;
+        DBMS_OUTPUT.PUT_LINE('[load_dim_date] Rows inserted: ' || v_rows_inserted);
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            DBMS_OUTPUT.PUT_LINE('[load_dim_date] ERROR: ' || SQLERRM);
+            RAISE;
+    END load_dim_date;
+    /
+
+    -- -------------------------------------------------------------
+    -- PROCEDURE: load_dim_match
+    --   Loads matches from OLTP MATCH.
+    -- -------------------------------------------------------------
+    CREATE OR REPLACE PROCEDURE load_dim_match AS
+        v_rows_inserted NUMBER := 0;
+    BEGIN
+        INSERT INTO DIM_MATCH (
+            match_id,
+            match_date,
+            match_hour
+        )
+        SELECT
+            m.match_id,
+            TRUNC(m.match_date),
+            m.match_hour
+        FROM MATCH m;
+
+        v_rows_inserted := SQL%ROWCOUNT;
+        COMMIT;
+        DBMS_OUTPUT.PUT_LINE('[load_dim_match] Rows inserted: ' || v_rows_inserted);
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            DBMS_OUTPUT.PUT_LINE('[load_dim_match] ERROR: ' || SQLERRM);
+            RAISE;
+    END load_dim_match;
+    /
+
+    -- -------------------------------------------------------------
+    -- PROCEDURE: load_fact_match_team_performance
+    --   Loads the central fact table at the grain:
+    --   one row per team per match.
+    --
+    --   Notes:
+    --   - LEFT JOINs are used because some Phase 1 stat tables may
+    --     not have rows for every match_team_id.
+    --   - possession_pct is transformed from VARCHAR2 like '75%'
+    --     into NUMBER(5,2) like 75.
+    -- -------------------------------------------------------------
+    CREATE OR REPLACE PROCEDURE load_fact_match_team_performance AS
+        v_rows_inserted NUMBER := 0;
+    BEGIN
+        INSERT INTO FACT_MATCH_TEAM_PERFORMANCE (
+            tournament_key,
+            stage_key,
+            date_key,
+            match_key,
+            team_key,
+            match_team_id,
+            is_team1,
+            goals,
+            goals_conceded,
+            assists,
+            penalties_scored,
+            own_goals,
+            goal_preventions,
+            total_attempts,
+            on_target_attempts,
+            off_target_attempts,
+            attempts_inside_penalty_area,
+            attempts_outside_penalty_area,
+            goals_inside_penalty_area,
+            goals_outside_penalty_area,
+            possession_pct,
+            possession_in_contest,
+            passes,
+            passes_completed,
+            crosses,
+            crosses_completed,
+            switches_of_play_completed,
+            corners,
+            free_kicks,
+            offsides,
+            total_offers_to_receive,
+            inbehind_offers_to_receive,
+            inbetween_offers_to_receive,
+            infront_offers_to_receive,
+            receptions_mid_def_lines,
+            defensive_goal_preventions,
+            forced_turnovers,
+            defensive_pressures_applied,
+            yellow_cards,
+            red_cards,
+            fouls_against,
+            left_channel,
+            left_inside_channel,
+            central_channel,
+            right_inside_channel,
+            right_channel,
+            attempted_line_breaks,
+            completed_line_breaks,
+            attempted_def_line_breaks,
+            completed_def_line_breaks
+        )
+        SELECT
+            dt.tournament_key,
+            ds.stage_key,
+            dd.date_key,
+            dm.match_key,
+            dteam.team_key,
+            mt.match_team_id,
+            mt.is_team1,
+            NVL(sc.goals, 0),
+            NVL(sc.goals_conceded, 0),
+            NVL(sc.assists, 0),
+            NVL(sc.penalties_scored, 0),
+            NVL(sc.own_goals, 0),
+            NVL(sc.goal_preventions, 0),
+            NVL(sh.total_attempts, 0),
+            NVL(sh.on_target_attempts, 0),
+            NVL(sh.off_target_attempts, 0),
+            NVL(sh.attempts_inside_penalty_area, 0),
+            NVL(sh.attempts_outside_penalty_area, 0),
+            NVL(sh.goals_inside_penalty_area, 0),
+            NVL(sh.goals_outside_penalty_area, 0),
+            CASE
+                WHEN ps.possession_pct IS NULL OR TRIM(ps.possession_pct) = '' THEN NULL
+                ELSE TO_NUMBER(REPLACE(TRIM(ps.possession_pct), '%', ''))
+            END AS possession_pct,
+            NVL(ps.possession_in_contest, 0),
+            NVL(ps.passes, 0),
+            NVL(ps.passes_completed, 0),
+            NVL(ps.crosses, 0),
+            NVL(ps.crosses_completed, 0),
+            NVL(ps.switches_of_play_completed, 0),
+            NVL(ps.corners, 0),
+            NVL(ps.free_kicks, 0),
+            NVL(ps.offsides, 0),
+            NVL(ps.total_offers_to_receive, 0),
+            NVL(ps.inbehind_offers_to_receive, 0),
+            NVL(ps.inbetween_offers_to_receive, 0),
+            NVL(ps.infront_offers_to_receive, 0),
+            NVL(ps.receptions_mid_def_lines, 0),
+            NVL(df.goal_preventions, 0),
+            NVL(df.forced_turnovers, 0),
+            NVL(df.defensive_pressures_applied, 0),
+            NVL(di.yellow_cards, 0),
+            NVL(di.red_cards, 0),
+            NVL(di.fouls_against, 0),
+            NVL(ch.left_channel, 0),
+            NVL(ch.left_inside_channel, 0),
+            NVL(ch.central_channel, 0),
+            NVL(ch.right_inside_channel, 0),
+            NVL(ch.right_channel, 0),
+            NVL(lb.attempted_line_breaks, 0),
+            NVL(lb.completed_line_breaks, 0),
+            NVL(lb.attempted_def_line_breaks, 0),
+            NVL(lb.completed_def_line_breaks, 0)
+        FROM MATCH_TEAM mt
+        JOIN MATCH m
+            ON mt.match_id = m.match_id
+        JOIN STAGE s
+            ON m.stage_id = s.stage_id
+        JOIN TOURNAMENT t
+            ON s.tournament_id = t.tournament_id
+        JOIN DIM_TOURNAMENT dt
+            ON dt.tournament_id = t.tournament_id
+        JOIN DIM_STAGE ds
+            ON ds.stage_id = s.stage_id
+        JOIN DIM_DATE dd
+            ON dd.full_date = TRUNC(m.match_date)
+        JOIN DIM_MATCH dm
+            ON dm.match_id = m.match_id
+        JOIN DIM_TEAM dteam
+            ON dteam.team_id = mt.team_id
+        LEFT JOIN MATCH_TEAM_SCORE sc
+            ON mt.match_team_id = sc.match_team_id
+        LEFT JOIN MATCH_TEAM_SHOOTING_STATS sh
+            ON mt.match_team_id = sh.match_team_id
+        LEFT JOIN MATCH_TEAM_POSSESSION_STATS ps
+            ON mt.match_team_id = ps.match_team_id
+        LEFT JOIN MATCH_TEAM_DEFENSIVE_STATS df
+            ON mt.match_team_id = df.match_team_id
+        LEFT JOIN MATCH_TEAM_DISCIPLINE_STATS di
+            ON mt.match_team_id = di.match_team_id
+        LEFT JOIN MATCH_TEAM_CHANNEL_STATS ch
+            ON mt.match_team_id = ch.match_team_id
+        LEFT JOIN MATCH_TEAM_LINE_BREAK_STATS lb
+            ON mt.match_team_id = lb.match_team_id;
+
+        v_rows_inserted := SQL%ROWCOUNT;
+        COMMIT;
+        DBMS_OUTPUT.PUT_LINE('[load_fact_match_team_performance] Rows inserted: ' || v_rows_inserted);
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            DBMS_OUTPUT.PUT_LINE('[load_fact_match_team_performance] ERROR: ' || SQLERRM);
+            RAISE;
+    END load_fact_match_team_performance;
+    /
+
+    -- -------------------------------------------------------------
+    -- PROCEDURE: run_etl
+    --   Master procedure that performs a full warehouse refresh.
+    -- -------------------------------------------------------------
+    CREATE OR REPLACE PROCEDURE run_etl AS
+    BEGIN
+        DBMS_OUTPUT.PUT_LINE('========================================');
+        DBMS_OUTPUT.PUT_LINE(' STARTING PHASE 2 ETL');
+        DBMS_OUTPUT.PUT_LINE('========================================');
+
+        reset_warehouse_data;
+        load_dim_tournament;
+        load_dim_stage;
+        load_dim_team;
+        load_dim_date;
+        load_dim_match;
+        load_fact_match_team_performance;
+
+        DBMS_OUTPUT.PUT_LINE('========================================');
+        DBMS_OUTPUT.PUT_LINE(' ETL COMPLETED SUCCESSFULLY');
+        DBMS_OUTPUT.PUT_LINE('========================================');
+    EXCEPTION
+        WHEN OTHERS THEN
+            DBMS_OUTPUT.PUT_LINE('[run_etl] ERROR: ' || SQLERRM);
+            RAISE;
+    END run_etl;
+    /
+
+    -- -------------------------------------------------------------
+    -- OPTIONAL EXECUTION BLOCK
+    --   Uncomment to run the ETL immediately after loading this file.
+    -- -------------------------------------------------------------
+    BEGIN
+        run_etl;
+    END;
+    /
+
+    -- -------------------------------------------------------------
+    -- OPTIONAL VERIFICATION QUERIES
+    -- -------------------------------------------------------------
+    SELECT COUNT(*) AS dim_tournament_rows FROM DIM_TOURNAMENT;
+    SELECT COUNT(*) AS dim_stage_rows      FROM DIM_STAGE;
+    SELECT COUNT(*) AS dim_team_rows       FROM DIM_TEAM;
+    SELECT COUNT(*) AS dim_date_rows       FROM DIM_DATE;
+    SELECT COUNT(*) AS dim_match_rows      FROM DIM_MATCH;
+    SELECT COUNT(*) AS fact_rows           FROM FACT_MATCH_TEAM_PERFORMANCE;
